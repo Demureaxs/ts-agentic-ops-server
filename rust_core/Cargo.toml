@@ -1,0 +1,16 @@
+[package]
+name = "rust_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# The magic crate for Node.js bindings
+napi = "2"
+napi-derive = "2"
+
+[build-dependencies]
+# This helps the build process
+napi-build = "2"

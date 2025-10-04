@@ -1,0 +1,25 @@
+{
+  "name": "ts-agentic-ops-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build:rs": "cd rust_core && cargo build --release && cp target/release/lib*.so ../rust_core.node",
+    "build:ts": "tsc",
+    "build": "npm run build:rs && npm run build:ts",
+    "start": "node dist/main"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@napi-rs/cli": "^3.3.0",
+    "@types/node": "^24.6.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "dotenv": "^17.2.3"
+  }
+}
