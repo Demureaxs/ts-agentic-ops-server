@@ -1,5 +1,0 @@
-create_directory
-write_to_file
-read_file
-delete_file
-say_hello
