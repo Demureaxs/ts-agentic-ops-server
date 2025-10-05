@@ -8,8 +8,18 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # The magic crate for Node.js bindings
-napi = "2"
+
+# Re-list your NAPI dependency to ensure you are using a recent version
+# assuming you are using the popular napi-rs wrapper:
+napi = { version = "2", features = ["async", "tokio_rt", "serde-json"] }
 napi-derive = "2"
+
+tokio = { version = "1", features = ["full"] } 
+
+whisper-rs = "0.15.1"
+
+hound = "3.5.1"
+
 
 [build-dependencies]
 # This helps the build process

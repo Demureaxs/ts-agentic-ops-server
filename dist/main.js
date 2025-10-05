@@ -46,14 +46,22 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const generative_ai_1 = require("@google/generative-ai");
 const dotenv = __importStar(require("dotenv"));
 const path = __importStar(require("path"));
+const fileSystem_1 = require("./toolkits/fileSystem");
+const rustBridge_1 = require("./toolkits/rustBridge");
 // --- Setup ---
 // Configure dotenv to find the .env file in the project root
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 const apiKey = process.env.GOOGLE_API_KEY;
-if (!apiKey) {
+if (!apiKey)
     throw new Error('GOOGLE_API_KEY not found in .env file.');
-}
 const genAI = new generative_ai_1.GoogleGenerativeAI(apiKey);
+// --- Tool Registry (The "Phonebook") ---
+// A Map that connects the string names from the plan to our actual functions.
+const availableTools = {
+    create_directory: fileSystem_1.createDirectory,
+    write_to_file: fileSystem_1.writeToFile,
+    say_hello: rustBridge_1.sayHello,
+};
 // --- The Planner Function ---
 function createPlan(goal, availableToolsStr) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -120,27 +128,73 @@ function createPlan(goal, availableToolsStr) {
         }
     });
 }
+// --- NEW: The Executor Function ---
+function executePlan(plan) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const stepResults = {};
+        let finalResponse = 'Plan finished, but no final output was generated.';
+        console.log('\n--- ✅ Supervisor: Executing Plan ---');
+        for (const step of plan) {
+            const stepNum = step.step_number;
+            const toolName = step.tool_name;
+            const toolArgs = step.arguments; // <-- THE FIX: Changed 'let_arguments' to 'const toolArgs'
+            console.log(`Executing Step ${stepNum}: ${toolName} with ${JSON.stringify(toolArgs)}`);
+            // State Management: Replace placeholders with previous results
+            for (const key in toolArgs) {
+                const value = toolArgs[key];
+                if (typeof value === 'string' && value.startsWith('<RESULT_OF_STEP_')) {
+                    const sourceStepNum = parseInt(value.split('_').pop().replace('>', ''));
+                    console.log(`  -> Replacing placeholder '${value}' with result from Step ${sourceStepNum}`);
+                    toolArgs[key] = stepResults[sourceStepNum];
+                }
+            }
+            // Tool Execution
+            if (availableTools[toolName]) {
+                const toolFunction = availableTools[toolName];
+                try {
+                    // We use 'await' as our tool functions are now async
+                    const output = yield toolFunction(...Object.values(toolArgs));
+                    stepResults[stepNum] = output;
+                    finalResponse = output;
+                    console.log(`  -> SUCCESS: Result stored.`);
+                }
+                catch (e) {
+                    finalResponse = `  -> 🔴 FAILED: ${e.message}`;
+                    console.log(finalResponse);
+                    break; // Stop execution if a step fails
+                }
+            }
+            else {
+                finalResponse = `  -> 🔴 FAILED: Tool '${toolName}' not found.`;
+                console.log(finalResponse);
+                break;
+            }
+        }
+        console.log('--- ✅ Supervisor: Plan Execution Finished ---');
+        return String(finalResponse);
+    });
+}
 // --- Main Execution Block ---
-// We wrap our main logic in an async function so we can use 'await'
 function main() {
     return __awaiter(this, void 0, void 0, function* () {
-        // 1. Define our available tools for the planner.
         const toolDescriptions = `
     - create_directory(directory_path: string)
     - write_to_file(file_path: string, content: string)
-    - say_hello(name: string): This is a high-performance function written in Rust that returns a greeting string.
+    - say_hello(name: string): A high-performance Rust function.
     `;
-        // 2. Define a complex goal.
         const userGoal = "Create a new project folder called 'ts_project', and then create a greeting file inside it named 'hello.ts' using the Rust module to greet 'TypeScript'";
-        // 3. Call the planner.
+        // 1. Create the plan
         const thePlan = yield createPlan(userGoal, toolDescriptions);
-        // 4. Display the plan.
+        // 2. Display and Execute the plan
         if (thePlan && thePlan.length > 0) {
             console.log("\n--- The Supervisor's Plan ---");
             thePlan.forEach((step) => {
                 console.log(`Step ${step.step_number}: Use tool '${step.tool_name}' with arguments ${JSON.stringify(step.arguments)}`);
             });
             console.log('-----------------------------');
+            // 2a. Execute the plan!
+            const finalResult = yield executePlan(thePlan);
+            console.log(`\n--- SUPERVISOR FINAL OUTPUT ---\n${finalResult}`);
         }
         else {
             console.log('Supervisor failed to create a plan.');

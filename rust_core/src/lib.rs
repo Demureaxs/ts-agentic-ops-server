@@ -1,4 +1,5 @@
 use napi_derive::napi;
+mod transcribe_audio;
 
 #[napi]
 pub fn say_hello(name: String) -> String {
