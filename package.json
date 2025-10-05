@@ -7,19 +7,27 @@
     "build:rs": "cd rust_core && cargo build --release && cp target/release/lib*.so ../rust_core.node",
     "build:ts": "tsc",
     "build": "npm run build:rs && npm run build:ts",
-    "start": "node dist/main"
+    "start": "node dist/main",
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts | pino-pretty"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@napi-rs/cli": "^3.3.0",
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.0.0",
     "@types/node": "^24.6.2",
+    "pino-pretty": "^13.1.1",
     "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
-    "dotenv": "^17.2.3"
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "multer": "^2.0.2",
+    "pino": "^10.0.0"
   }
 }

@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Agentic Ops Server</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+        background-color: #1c1c1e;
+        color: white;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+      }
+      #micButton {
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        border: none;
+        font-size: 18px;
+        cursor: pointer;
+        color: white;
+        transition: background-color 0.2s;
+        background-color: #007aff;
+      }
+      #micButton.listening {
+        background-color: #ff3b30;
+        animation: pulse 1.5s infinite;
+      }
+      #status {
+        margin-top: 25px;
+        font-size: 18px;
+        color: #8e8e93;
+        text-align: center;
+        max-width: 90%;
+      }
+      @keyframes pulse {
+        0% {
+          box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7);
+        }
+        70% {
+          box-shadow: 0 0 0 20px rgba(255, 59, 48, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(255, 59, 48, 0);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div style="text-align: center">
+      <button id="micButton">Listen</button>
+      <div id="status">Tap to give a command</div>
+    </div>
+    <script>
+      const micButton = document.getElementById('micButton');
+      const statusDiv = document.getElementById('status');
+
+      // Check if the browser supports SpeechRecognition
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        statusDiv.innerText = "Sorry, your browser doesn't support live speech recognition.";
+      } else {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.lang = 'en-GB';
+        recognition.interimResults = false;
+
+        micButton.onclick = () => {
+          recognition.start();
+          micButton.classList.add('listening');
+          micButton.innerText = 'Listening...';
+          statusDiv.innerText = 'Speak now...';
+        };
+
+        recognition.onresult = (event) => {
+          const transcript = event.results[0][0].transcript;
+          statusDiv.innerText = `You said: "${transcript}"\nSending to agent...`;
+
+          // Send the TRANSCRIBED TEXT to our new endpoint
+          fetch('/agent/text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ goal: transcript }),
+          })
+            .then((response) => response.json())
+            .then((data) => {
+              statusDiv.innerText = `Agent: ${data.final_response}`;
+            })
+            .catch((error) => {
+              statusDiv.innerText = `Error: ${error}`;
+            });
+        };
+
+        recognition.onend = () => {
+          micButton.classList.remove('listening');
+          micButton.innerText = 'Listen';
+        };
+
+        recognition.onerror = (event) => {
+          statusDiv.innerText = `Speech recognition error: ${event.error}`;
+        };
+      }
+    </script>
+  </body>
+</html>

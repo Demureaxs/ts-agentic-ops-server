@@ -25,10 +25,7 @@ const availableTools: { [key: string]: Function } = {
 };
 
 // --- The Planner Function ---
-async function createPlan(
-  goal: string,
-  availableToolsStr: string
-): Promise<any[]> {
+async function createPlan(goal: string, availableToolsStr: string): Promise<any[]> {
   const plannerModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   const planningPrompt = `
@@ -97,8 +94,7 @@ async function createPlan(
 // --- NEW: The Executor Function ---
 async function executePlan(plan: any[]): Promise<string> {
   const stepResults: { [key: number]: any } = {};
-  let finalResponse: string =
-    'Plan finished, but no final output was generated.';
+  let finalResponse: string = 'Plan finished, but no final output was generated.';
 
   console.log('\n--- ✅ Supervisor: Executing Plan ---');
 
@@ -107,20 +103,14 @@ async function executePlan(plan: any[]): Promise<string> {
     const toolName = step.tool_name;
     const toolArgs = step.arguments; // <-- THE FIX: Changed 'let_arguments' to 'const toolArgs'
 
-    console.log(
-      `Executing Step ${stepNum}: ${toolName} with ${JSON.stringify(toolArgs)}`
-    );
+    console.log(`Executing Step ${stepNum}: ${toolName} with ${JSON.stringify(toolArgs)}`);
 
     // State Management: Replace placeholders with previous results
     for (const key in toolArgs) {
       const value = toolArgs[key];
       if (typeof value === 'string' && value.startsWith('<RESULT_OF_STEP_')) {
-        const sourceStepNum = parseInt(
-          value.split('_').pop()!.replace('>', '')
-        );
-        console.log(
-          `  -> Replacing placeholder '${value}' with result from Step ${sourceStepNum}`
-        );
+        const sourceStepNum = parseInt(value.split('_').pop()!.replace('>', ''));
+        console.log(`  -> Replacing placeholder '${value}' with result from Step ${sourceStepNum}`);
         toolArgs[key] = stepResults[sourceStepNum];
       }
     }
@@ -150,7 +140,7 @@ async function executePlan(plan: any[]): Promise<string> {
   return String(finalResponse);
 }
 // --- Main Execution Block ---
-async function main() {
+export async function runSupervisor(goal: string): Promise<string> {
   const toolDescriptions = `
     - create_directory(directory_path: string)
     - write_to_file(file_path: string, content: string)
@@ -161,16 +151,14 @@ async function main() {
     "Create a new project folder called 'ts_project', and then create a greeting file inside it named 'hello.ts' using the Rust module to greet 'TypeScript'";
 
   // 1. Create the plan
-  const thePlan = await createPlan(userGoal, toolDescriptions);
+  const thePlan = await createPlan(goal, toolDescriptions);
 
   // 2. Display and Execute the plan
   if (thePlan && thePlan.length > 0) {
     console.log("\n--- The Supervisor's Plan ---");
     thePlan.forEach((step) => {
       console.log(
-        `Step ${step.step_number}: Use tool '${
-          step.tool_name
-        }' with arguments ${JSON.stringify(step.arguments)}`
+        `Step ${step.step_number}: Use tool '${step.tool_name}' with arguments ${JSON.stringify(step.arguments)}`
       );
     });
     console.log('-----------------------------');
@@ -178,10 +166,9 @@ async function main() {
     // 2a. Execute the plan!
     const finalResult = await executePlan(thePlan);
     console.log(`\n--- SUPERVISOR FINAL OUTPUT ---\n${finalResult}`);
+    return finalResult;
   } else {
     console.log('Supervisor failed to create a plan.');
+    return 'Supervisor failed to create a plan';
   }
 }
-
-// Run the main function
-main();
