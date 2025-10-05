@@ -39,7 +39,6 @@ export async function searchAnswerThePublic(keyword: string): Promise<string[]> 
   }
 }
 
-
 // This function fetches Google Autocomplete suggestions for a given query.
 export async function getAutocompleteSuggestions(query: string): Promise<string[]> {
   logger.info({ query }, `--- TOOL: Fetching Google Autocomplete suggestions for '${query}' ---`);
@@ -71,6 +70,7 @@ export async function getAutocompleteSuggestions(query: string): Promise<string[
   }
 }
 
+// This function mines keyword ideas based on a base keyword and saves them to a file.
 export async function mineKeywordIdeas(baseKeyword: string, client: string): Promise<string> {
   logger.info({ keyword: baseKeyword, client }, `--- TOOL: Mining keyword ideas for '${baseKeyword}' ---`);
 
@@ -117,4 +117,74 @@ export async function mineKeywordIdeas(baseKeyword: string, client: string): Pro
     logger.error(errorMessage);
     return errorMessage;
   }
+}
+
+export async function googleSearchAndScrapeLinks(query: string, client: string): Promise<{ title: string; link: string }[]> {
+  logger.info({ query }, `--- TOOL: Performing Google search and scraping links for '${query}' ---`);
+
+  const browser = await chromium.launch({ headless: false }); // Back to headless for speed
+  const page = await browser.newPage();
+  const results: { title: string; link: string }[] = [];
+
+  try {
+    // 1. Go to Google
+    await page.goto('https://www.google.com/');
+
+    // 2. Handle Cookie Consent if it appears
+    const consentButton = page.locator('button:has-text("Accept all"), button:has-text("Reject all")').first();
+    try {
+      await consentButton.click({ timeout: 3000 });
+      logger.info('Cookie consent handled.');
+    } catch (error) {
+      logger.info('No cookie consent button found, or it was not clickable.');
+    }
+
+    // 3. Perform the search
+    await page.locator('textarea[name="q"]').fill(query);
+    await page.keyboard.press('Enter');
+
+    // 4. Wait for the search results to load
+    logger.info('Waiting for search results...');
+    await page.waitForSelector('#search');
+
+    // 5. Scrape the results
+    // This selector is more robust: find links that contain an H3 heading.
+    const resultLocators = page.locator('#search a:has(h3)');
+    const count = await resultLocators.count();
+
+    logger.info(`Found ${count} potential results. Scraping top 3...`);
+
+    for (let i = 0; i < Math.min(count, 3); i++) {
+      const locator = resultLocators.nth(i);
+      const title = await locator.locator('h3').innerText();
+      const link = await locator.getAttribute('href');
+
+      if (title && link) {
+        results.push({ title, link });
+      }
+    }
+  } catch (error: any) {
+    logger.error({ err: error.message }, 'Error during Google search scraping');
+  } finally {
+    await browser.close();
+    logger.info('--- TOOL: Browser closed ---');
+  }
+
+  logger.info({ resultsCount: results.length }, 'Scraping complete.');
+
+  const outputDir = path.join('data', client);
+  const fileName = `${query.replace(/ /g, '_')}_serp_results.json`;
+  const fullPath = path.join(outputDir, fileName);
+
+  try {
+    await fsPromises.mkdir(outputDir, { recursive: true });
+    await fsPromises.writeFile(fullPath, JSON.stringify(results, null, 2));
+
+    const successMessage = `Successfully saved ${results.length} search results to ${fileName}`;
+    logger.info(successMessage);
+  } catch (error: any) {
+    const errorMessage = `Error saving search results to file: ${error.message}`;
+    logger.error(errorMessage);
+  }
+  return results;
 }
