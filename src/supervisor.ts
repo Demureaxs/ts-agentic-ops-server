@@ -4,8 +4,10 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
-import { createDirectory, writeToFile } from './toolkits/fileSystem';
+import { createDirectory, deleteFile, readFile, writeToFile } from './toolkits/fileSystem';
 import { sayHello } from './toolkits/rustBridge';
+import logger from './services/logger';
+import { log } from 'console';
 
 // --- Setup ---
 // Configure dotenv to find the .env file in the project root
@@ -22,6 +24,8 @@ const availableTools: { [key: string]: Function } = {
   create_directory: createDirectory,
   write_to_file: writeToFile,
   say_hello: sayHello,
+  delete_file: deleteFile,
+  read_file: readFile,
 };
 
 // --- The Planner Function ---
@@ -69,7 +73,8 @@ async function createPlan(goal: string, availableToolsStr: string): Promise<any[
     GOAL: "${goal}"
     `;
 
-  console.log('🤖 Supervisor: Asking the planner for a step-by-step plan...');
+  logger.info('🤖 Supervisor: Asking the planner for a step-by-step plan...');
+
   const result = await plannerModel.generateContent(planningPrompt);
   const response = result.response;
   const responseText = response.text();
@@ -78,15 +83,19 @@ async function createPlan(goal: string, availableToolsStr: string): Promise<any[
     // Use the same robust parsing logic as before
     const startIndex = responseText.indexOf('[');
     const endIndex = responseText.lastIndexOf(']') + 1;
+
     if (startIndex === -1 || endIndex === 0) {
       throw new Error("No valid JSON list found in the model's response.");
     }
+
     const planText = responseText.substring(startIndex, endIndex);
     const plan = JSON.parse(planText);
+
     return plan;
   } catch (e) {
-    console.error('--- ERROR: Could not parse the plan. ---', e);
-    console.log('Raw Planner Response:\n', responseText);
+    logger.error('Failed to parse plan from model response.');
+    logger.info('Full model response for debugging:');
+    logger.info(responseText);
     return [];
   }
 }
@@ -96,21 +105,22 @@ async function executePlan(plan: any[]): Promise<string> {
   const stepResults: { [key: number]: any } = {};
   let finalResponse: string = 'Plan finished, but no final output was generated.';
 
-  console.log('\n--- ✅ Supervisor: Executing Plan ---');
+  logger.info('Supervisor: Starting plan execution...');
 
   for (const step of plan) {
     const stepNum = step.step_number;
     const toolName = step.tool_name;
     const toolArgs = step.arguments; // <-- THE FIX: Changed 'let_arguments' to 'const toolArgs'
 
-    console.log(`Executing Step ${stepNum}: ${toolName} with ${JSON.stringify(toolArgs)}`);
+    logger.info(`Executing Step ${stepNum}: ${toolName} wuth ${JSON.stringify(toolArgs)}`);
 
     // State Management: Replace placeholders with previous results
     for (const key in toolArgs) {
       const value = toolArgs[key];
       if (typeof value === 'string' && value.startsWith('<RESULT_OF_STEP_')) {
         const sourceStepNum = parseInt(value.split('_').pop()!.replace('>', ''));
-        console.log(`  -> Replacing placeholder '${value}' with result from Step ${sourceStepNum}`);
+
+        logger.info(`  -> Replacing placeholder '${value}' with result from Step ${sourceStepNum}`);
         toolArgs[key] = stepResults[sourceStepNum];
       }
     }
@@ -123,7 +133,8 @@ async function executePlan(plan: any[]): Promise<string> {
         const output = await toolFunction(...Object.values(toolArgs));
         stepResults[stepNum] = output;
         finalResponse = output;
-        console.log(`  -> SUCCESS: Result stored.`);
+
+        logger.info(`  -> SUCCESS: Result stored.`);
       } catch (e: any) {
         finalResponse = `  -> 🔴 FAILED: ${e.message}`;
         console.log(finalResponse);
@@ -131,7 +142,7 @@ async function executePlan(plan: any[]): Promise<string> {
       }
     } else {
       finalResponse = `  -> 🔴 FAILED: Tool '${toolName}' not found.`;
-      console.log(finalResponse);
+      logger.info(finalResponse);
       break;
     }
   }
@@ -142,10 +153,12 @@ async function executePlan(plan: any[]): Promise<string> {
 // --- Main Execution Block ---
 export async function runSupervisor(goal: string): Promise<string> {
   const toolDescriptions = `
-    - create_directory(directory_path: string)
-    - write_to_file(file_path: string, content: string)
-    - say_hello(name: string): A high-performance Rust function.
-    `;
+    - create_directory(directory_path: string): Creates a new folder at the specified path.
+    - write_to_file(file_path: string, content: string): Writes text content to a file.
+    - read_file(filePath: string): Reads and returns the full content of a file.
+    - delete_file(filePath: string): ⚠️ Deletes a file permanently from the file system.
+    - say_hello(name: string): A high-performance function from the Rust core.
+  `;
 
   const userGoal =
     "Create a new project folder called 'ts_project', and then create a greeting file inside it named 'hello.ts' using the Rust module to greet 'TypeScript'";
@@ -155,9 +168,9 @@ export async function runSupervisor(goal: string): Promise<string> {
 
   // 2. Display and Execute the plan
   if (thePlan && thePlan.length > 0) {
-    console.log("\n--- The Supervisor's Plan ---");
+    logger.info("\n--- The Supervisor's Plan ---");
     thePlan.forEach((step) => {
-      console.log(
+      logger.info(
         `Step ${step.step_number}: Use tool '${step.tool_name}' with arguments ${JSON.stringify(step.arguments)}`
       );
     });
@@ -165,10 +178,11 @@ export async function runSupervisor(goal: string): Promise<string> {
 
     // 2a. Execute the plan!
     const finalResult = await executePlan(thePlan);
-    console.log(`\n--- SUPERVISOR FINAL OUTPUT ---\n${finalResult}`);
+
+    logger.info(`\n--- SUPERVISOR FINAL OUTPUT ---\n${finalResult}`);
     return finalResult;
   } else {
-    console.log('Supervisor failed to create a plan.');
+    logger.info('Supervisor failed to create a plan.');
     return 'Supervisor failed to create a plan';
   }
 }

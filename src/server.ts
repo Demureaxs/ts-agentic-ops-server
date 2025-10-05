@@ -40,6 +40,7 @@ app.get('/', (req: Request, res: Response) => {
 
 app.use('/agent', agentRouter);
 
+
 // Start the Server
 app.listen(PORT, () => {
   logger.info(`🚀 Server is running at http://localhost:${PORT}`);
