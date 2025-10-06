@@ -3,29 +3,28 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import logger from './services/logger';
 
 import { createDirectory, deleteFile, readFile, writeToFile } from './toolkits/fileSystem';
 import { sayHello } from './toolkits/rustBridge';
-import logger from './services/logger';
-import { log } from 'console';
+import { researchTopic, getInternalLinks } from './toolkits/seoTools'; // This line is causing the error
+import { writeSeoArticle } from './toolkits/writingTools';
 
 // --- Setup ---
 // Configure dotenv to find the .env file in the project root
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
-
 const apiKey = process.env.GOOGLE_API_KEY;
 if (!apiKey) throw new Error('GOOGLE_API_KEY not found in .env file.');
-
 const genAI = new GoogleGenerativeAI(apiKey);
 
-// --- Tool Registry (The "Phonebook") ---
-// A Map that connects the string names from the plan to our actual functions.
+// --- Full Tool Registry ---
 const availableTools: { [key: string]: Function } = {
   create_directory: createDirectory,
   write_to_file: writeToFile,
   say_hello: sayHello,
-  delete_file: deleteFile,
-  read_file: readFile,
+  research_topic: researchTopic, // ADD the new tool
+  get_internal_links: getInternalLinks,
+  write_seo_article: writeSeoArticle,
 };
 
 // --- The Planner Function ---
@@ -33,42 +32,27 @@ async function createPlan(goal: string, availableToolsStr: string): Promise<any[
   const plannerModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
   const planningPrompt = `
-    You are an expert project planner for an AI agent. Your job is to take a high-level GOAL
-    and break it down into a sequence of concrete steps using the AVAILABLE TOOLS.
-
+    You are an expert project planner...
     AVAILABLE TOOLS:
     ${availableToolsStr}
-
+    
     RULES:
-    - Each step in the plan must be a JSON object with three keys: "step_number", "tool_name", and "arguments".
-    - The 'arguments' must be a dictionary of key-value pairs.
-    - If a step needs to use the output from a previous step, use the placeholder string "<RESULT_OF_STEP_X>" in the arguments, where X is the previous step number.
-    - Return your final plan as a single, clean JSON list of these step objects. Do not add any other text, explanation, or markdown formatting.
+    - Each step must be a JSON object with "step_number", "tool_name", and "arguments".
+    - Placeholders like "<RESULT_OF_STEP_X>" are valid in 'arguments'.
+    - For the 'write_to_file' tool, you MUST provide the 'content' argument. You MUST ALSO provide the 'topic' argument based on the article's subject. Do NOT provide a 'filePath'.
+    - For the 'write_seo_article' tool, the 'scrapedContent' argument MUST be the placeholder for the 'research_topic' step.
+    - Return ONLY the clean JSON list.
 
     --- EXAMPLE ---
-    GOAL: "Create a demo folder and a file inside it called test.txt with the content 'hello'"
-    
+    GOAL: "Write an article about heat pumps for nnac and save it."
     YOUR RESPONSE:
     [
-      {
-        "step_number": 1,
-        "tool_name": "create_directory",
-        "arguments": {
-          "directory_path": "demo"
-        }
-      },
-      {
-        "step_number": 2,
-        "tool_name": "write_to_file",
-        "arguments": {
-          "file_path": "demo/test.txt",
-          "content": "hello"
-        }
-      }
+      {"step_number": 1, "tool_name": "research_topic", "arguments": {"query": "what are heat pumps", "client": "nnac"}},
+      {"step_number": 2, "tool_name": "get_internal_links", "arguments": {"client": "nnac"}},
+      {"step_number": 3, "tool_name": "write_seo_article", "arguments": {"topic": "what are heat pumps", "scrapedContent": "<RESULT_OF_STEP_1>", "internalLinks": "<RESULT_OF_STEP_2>"}},
+      {"step_number": 4, "tool_name": "write_to_file", "arguments": {"topic": "what are heat pumps", "content": "<RESULT_OF_STEP_3>"}}
     ]
     --- END OF EXAMPLE ---
-
-    Now, generate a plan for the following goal. Remember to only output the clean JSON list.
 
     GOAL: "${goal}"
     `;
@@ -76,8 +60,7 @@ async function createPlan(goal: string, availableToolsStr: string): Promise<any[
   logger.info('🤖 Supervisor: Asking the planner for a step-by-step plan...');
 
   const result = await plannerModel.generateContent(planningPrompt);
-  const response = result.response;
-  const responseText = response.text();
+  const responseText = result.response.text();
 
   try {
     // Use the same robust parsing logic as before
@@ -101,7 +84,7 @@ async function createPlan(goal: string, availableToolsStr: string): Promise<any[
 }
 
 // --- NEW: The Executor Function ---
-async function executePlan(plan: any[]): Promise<string> {
+async function executePlan(plan: any[], goal: string, client: string): Promise<string> {
   const stepResults: { [key: number]: any } = {};
   let finalResponse: string = 'Plan finished, but no final output was generated.';
 
@@ -110,7 +93,7 @@ async function executePlan(plan: any[]): Promise<string> {
   for (const step of plan) {
     const stepNum = step.step_number;
     const toolName = step.tool_name;
-    const toolArgs = step.arguments; // <-- THE FIX: Changed 'let_arguments' to 'const toolArgs'
+    const toolArgs = step.arguments;
 
     logger.info(`Executing Step ${stepNum}: ${toolName} wuth ${JSON.stringify(toolArgs)}`);
 
@@ -129,8 +112,20 @@ async function executePlan(plan: any[]): Promise<string> {
     if (availableTools[toolName]) {
       const toolFunction = availableTools[toolName];
       try {
+        let output;
+
+        if (toolName === 'research_topic') {
+          output = await toolFunction(toolArgs.query, toolArgs.client);
+        } else if (toolName === 'get_internal_links') {
+          output = await toolFunction(toolArgs.client);
+        } else if (toolName === 'write_seo_article') {
+          output = await toolFunction(genAI, toolArgs.topic, toolArgs.scrapedContent, toolArgs.internalLinks);
+        } else if (toolName === 'write_to_file') {
+          output = await toolFunction({ ...toolArgs, client }); // Pass client here
+        }
+
         // We use 'await' as our tool functions are now async
-        const output = await toolFunction(...Object.values(toolArgs));
+        // const output = await toolFunction(...Object.values(toolArgs));
         stepResults[stepNum] = output;
         finalResponse = output;
 
@@ -150,18 +145,56 @@ async function executePlan(plan: any[]): Promise<string> {
   console.log('--- ✅ Supervisor: Plan Execution Finished ---');
   return String(finalResponse);
 }
-// --- Main Execution Block ---
-export async function runSupervisor(goal: string): Promise<string> {
-  const toolDescriptions = `
-    - create_directory(directory_path: string): Creates a new folder at the specified path.
-    - write_to_file(file_path: string, content: string): Writes text content to a file.
-    - read_file(filePath: string): Reads and returns the full content of a file.
-    - delete_file(filePath: string): ⚠️ Deletes a file permanently from the file system.
-    - say_hello(name: string): A high-performance function from the Rust core.
+
+export async function filterKeywords(keywords: string[], client: string): Promise<string[]> {
+  logger.info(`Filtering ${keywords.length} to remove duplicates and short entries...`);
+
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+  const prompt = `
+    You are an expert SEO Content Strategist for a company called '${client}'.
+    Your task is to review a list of raw, auto-generated keywords and select ONLY the ones that are grammatically correct, make logical sense, and would be a good title or topic for a blog post.
+
+    Discard any keywords that are nonsensical, spammy, irrelevant, or just a jumble of words.
+
+    Return your response as a clean JSON array of strings, containing ONLY the good keywords you have selected. Do not include any other text or explanation.
+
+    Here is the list of keywords to filter:
+    ${JSON.stringify(keywords)}
   `;
 
-  const userGoal =
-    "Create a new project folder called 'ts_project', and then create a greeting file inside it named 'hello.ts' using the Rust module to greet 'TypeScript'";
+  try {
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+
+    const startIndex = responseText.indexOf('[');
+    const endIndex = responseText.lastIndexOf(']') + 1;
+    const jsonText = responseText.substring(startIndex, endIndex);
+
+    const googleKeywords: string[] = JSON.parse(jsonText);
+
+    logger.info(`Filtered down to ${googleKeywords.length} high-quality keywords.`);
+    return googleKeywords;
+  } catch (error: any) {
+    logger.error({ err: error.message }, 'Error filtering keywords with the language model');
+    return [];
+  }
+}
+
+// --- Main Execution Block ---
+export async function runSupervisor(goal: string): Promise<string> {
+  // Extract the client from the goal for now
+  // More robust is to pass it as a second argument
+  const clientMatch = goal.match(/for the '(\w+)' client/);
+  const client = clientMatch ? clientMatch[1] : 'default_client';
+
+  // UPDATED Brochure for the Planner
+  const toolDescriptions = `
+    - research_topic(query: string, client: string): Researches a topic and scrapes content.
+    - get_internal_links(client: string): Gets internal links for a specific client.
+    - write_seo_article(topic: string, scrapedContent: string[], internalLinks: object[]): Writes a full blog post.
+    - write_to_file(topic: string, content: string): Saves the final article to a file, automatically named after the topic.
+    `;
 
   // 1. Create the plan
   const thePlan = await createPlan(goal, toolDescriptions);
@@ -170,16 +203,17 @@ export async function runSupervisor(goal: string): Promise<string> {
   if (thePlan && thePlan.length > 0) {
     logger.info("\n--- The Supervisor's Plan ---");
     thePlan.forEach((step) => {
-      logger.info(
-        `Step ${step.step_number}: Use tool '${step.tool_name}' with arguments ${JSON.stringify(step.arguments)}`
-      );
+      logger.info(`Step ${step.step_number}: Use tool '${step.tool_name}' with arguments ${JSON.stringify(step.arguments)}`);
     });
     console.log('-----------------------------');
 
-    // 2a. Execute the plan!
-    const finalResult = await executePlan(thePlan);
+    let finalResult = '';
+    if (client) {
+      // 2a. Execute the plan!
+      finalResult = await executePlan(thePlan, goal, client);
 
-    logger.info(`\n--- SUPERVISOR FINAL OUTPUT ---\n${finalResult}`);
+      logger.info(`\n--- SUPERVISOR FINAL OUTPUT ---\n${finalResult}`);
+    }
     return finalResult;
   } else {
     logger.info('Supervisor failed to create a plan.');

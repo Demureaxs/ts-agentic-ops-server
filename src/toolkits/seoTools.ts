@@ -202,6 +202,33 @@ export async function scrapeWebpageContent(url: string): Promise<string> {
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
+    const selectors = [
+      'article',
+      'div.prose',
+      'main',
+      'div[role="main"]',
+      'div.post-content',
+      'div.article-body',
+      '#main-content',
+      '#content',
+      'div[id^="guide_content-component-"]',
+    ];
+
+    for (const selector of selectors) {
+      const locator = page.locator(selector).first();
+      if (await locator.isVisible({ timeout: 1000 })) {
+        logger.info(`Found content with selector:  '${selector}'`);
+        const content = await locator.innerText();
+
+        const cleanContent = content.replace(/\s\s+/g, ' ').trim();
+        logger.info(`Successfully scraped ${cleanContent.length} characters of content.`);
+        await browser.close();
+        logger.info('--- TOOL: Browser closed ---');
+        return cleanContent;
+      }
+    }
+    throw new Error('No suitable content selector found on the page.');
+
     // 1. Define the locator that we know finds ALL the content blocks.
     const contentLocators = page.locator('div[id^="guide_content-component-"]');
 
@@ -233,15 +260,50 @@ export async function scrapeWebpageContent(url: string): Promise<string> {
 
 // As we have changed the output structure to include a page links and output we need to ensure this function properly picks up the the relevant files
 export async function getInternalLinks(client: string, fileName: string): Promise<{ name: string; url: string }[]> {
-  logger.info('--- TOOL: Fetching internal links from example.com ---');
+  logger.info({ client }, `--- TOOL: Fetching internal links for client '${client}' ---`);
+  const filePath = path.join('data', client, 'inputs', 'internal_links.json');
 
   try {
-    const fileContent = await fsPromises.readFile(path.join('data', client, 'pageLinks', fileName), 'utf-8');
+    const fileContent = await fsPromises.readFile(filePath, 'utf-8');
     const links = JSON.parse(fileContent);
-    logger.info(`Successfully read ${links.length} links from ${fileName}`);
+
+    logger.info(`Successfully loaded ${links.length} internal links.`);
     return links;
   } catch (error: any) {
-    logger.error({ err: error.message }, `Error reading or parsing file: ${fileName}`);
+    logger.error({ err: error.message }, `Error reading ${filePath}`);
     return [];
   }
+}
+
+export async function researchTopic(query: string, client: string): Promise<string[]> {
+  logger.info({ query, client }, `--- COMBO TOOL: Researching topic '${query}' for ${client} ---`);
+
+  // Step 1: Call our existing tool to get the links
+  const searchResultString = await googleSearchAndScrapeLinks(query, client);
+
+  // Parse JSON file that the above function creates
+  const resultFileName = `${query.replace(/ /g, '_')}_serp_results.json`;
+  const resultFilePath = path.join('data', client, 'output', resultFileName);
+
+  let searchResults: { title: string; link: string }[] = [];
+  try {
+    const fileContent = await fsPromises.readFile(resultFilePath, 'utf-8');
+    searchResults = JSON.parse(fileContent);
+    logger.info(`Loaded ${searchResults.length} search results from ${resultFileName}`);
+  } catch (error: any) {
+    logger.error({ err: error.message }, `Error reading or parsing search results file: ${resultFileName}`);
+    return [];
+  }
+
+  const allScrapedContent: string[] = [];
+
+  for (const result of searchResults) {
+    const content = await scrapeWebpageContent(result.link);
+    if (!content.startsWith('Error')) {
+      allScrapedContent.push(content);
+    }
+  }
+
+  logger.info(`Successfully scraped content from ${allScrapedContent.length} URLs.`);
+  return allScrapedContent;
 }
