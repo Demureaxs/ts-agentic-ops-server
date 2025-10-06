@@ -154,6 +154,7 @@ export async function googleSearchAndScrapeLinks(query: string, client: string):
 
     logger.info(`Found ${count} potential results. Scraping top 3...`);
 
+    // Sets the number of results to store from serps
     for (let i = 0; i < Math.min(count, 3); i++) {
       const locator = resultLocators.nth(i);
       const title = await locator.locator('h3').innerText();
