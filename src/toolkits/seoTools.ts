@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import logger from '../services/logger';
 import * as fsPromises from 'fs/promises';
 import path from 'path';
+import { log } from 'console';
 
 export async function searchAnswerThePublic(keyword: string): Promise<string[]> {
   logger.info(`Searching AnswerThePublic for keyword: ${keyword}`);
@@ -98,7 +99,7 @@ export async function mineKeywordIdeas(baseKeyword: string, client: string): Pro
   logger.info(`Total unique keyword ideas mined: ${uniqueSuggestions.length}`);
 
   // Dynamic Path Logic
-  const outputDir = path.join('data', client);
+  const outputDir = path.join('data', client, 'output');
 
   const fileName = `${baseKeyword.replace(/ /g, '_')}_keywords.json`;
 
@@ -173,7 +174,7 @@ export async function googleSearchAndScrapeLinks(query: string, client: string):
 
   logger.info({ resultsCount: results.length }, 'Scraping complete.');
 
-  const outputDir = path.join('data', client);
+  const outputDir = path.join('data', client, 'output');
   const fileName = `${query.replace(/ /g, '_')}_serp_results.json`;
   const fullPath = path.join(outputDir, fileName);
 
@@ -190,4 +191,57 @@ export async function googleSearchAndScrapeLinks(query: string, client: string):
   return results;
 }
 
+// in src/toolkits/seo_tools.ts
 
+export async function scrapeWebpageContent(url: string): Promise<string> {
+  logger.info({ url }, `--- TOOL: Scraping main content from '${url}' ---`);
+
+  const browser = await chromium.launch({ headless: true });
+  const page = await browser.newPage();
+
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+    // 1. Define the locator that we know finds ALL the content blocks.
+    const contentLocators = page.locator('div[id^="guide_content-component-"]');
+
+    // 2. We don't wait for a single one. Instead, we get the text from all of them directly.
+    // The .allInnerTexts() command is smart enough to wait for the elements to appear.
+    logger.info('Finding and scraping all content blocks...');
+    const allTexts = await contentLocators.allInnerTexts();
+
+    if (allTexts.length === 0) {
+      throw new Error('No content blocks were found with the specified selector.');
+    }
+
+    // 3. Join the text from all the separate divs into one complete article.
+    // Using a double newline helps to separate the scraped sections.
+    const fullContent = allTexts.join('\n\n');
+
+    const cleanContent = fullContent.replace(/\s\s+/g, ' ').trim();
+
+    logger.info(`Successfully scraped ${cleanContent.length} characters of content.`);
+    return cleanContent;
+  } catch (error: any) {
+    logger.error({ err: error.message }, `Failed to scrape content from ${url}`);
+    return `Error: Could not scrape content from the URL. ${error.message}`;
+  } finally {
+    await browser.close();
+    logger.info('--- TOOL: Browser closed ---');
+  }
+}
+
+// As we have changed the output structure to include a page links and output we need to ensure this function properly picks up the the relevant files
+export async function getInternalLinks(client: string, fileName: string): Promise<{ name: string; url: string }[]> {
+  logger.info('--- TOOL: Fetching internal links from example.com ---');
+
+  try {
+    const fileContent = await fsPromises.readFile(path.join('data', client, 'pageLinks', fileName), 'utf-8');
+    const links = JSON.parse(fileContent);
+    logger.info(`Successfully read ${links.length} links from ${fileName}`);
+    return links;
+  } catch (error: any) {
+    logger.error({ err: error.message }, `Error reading or parsing file: ${fileName}`);
+    return [];
+  }
+}

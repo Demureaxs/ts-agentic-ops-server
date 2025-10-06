@@ -16,8 +16,6 @@ dotenv.config();
 const app: Express = express();
 const PORT = 8000;
 
-const HUGGING_FACE_TOKEN = process.env.HUGGING_FACE_TOKEN;
-
 const templatePath = path.join(__dirname, 'templates', 'frontend', 'audioInterface.html');
 const HTML_TEMPLATE = fs.readFileSync(templatePath, 'utf-8');
 
@@ -28,8 +26,6 @@ if (!fs.existsSync('outputs')) {
   fs.mkdirSync('outputs');
 }
 app.use('/outputs', express.static('outputs'));
-
-// --- Endpoints ---
 
 // Root serves the html recorder
 app.get('/', (req: Request, res: Response) => {
