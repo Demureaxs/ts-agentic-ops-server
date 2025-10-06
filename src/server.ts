@@ -9,7 +9,6 @@ import * as path from 'path';
 
 // --- Import our new logger and the supervisor ---
 import logger from './services/logger';
-import { runSupervisor } from './supervisor';
 import agentRouter from './routes/agentRoutes/agent.routes';
 
 // --- Setup ---
@@ -39,7 +38,6 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 app.use('/agent', agentRouter);
-
 
 // Start the Server
 app.listen(PORT, () => {
